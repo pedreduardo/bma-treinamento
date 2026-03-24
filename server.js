@@ -1,41 +1,79 @@
 const express = require('express');
 const path    = require('path');
+const fs      = require('fs');
 
 const app = express();
 app.use(express.json({ limit: '2mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
-// ── Proxy seguro para a API da Anthropic ──────────────────────
-app.post('/api/chat', async (req, res) => {
-  if (!process.env.ANTHROPIC_API_KEY) {
-    console.error('ANTHROPIC_API_KEY nao configurada!');
-    return res.status(500).json({ error: 'Chave da API nao configurada. Configure ANTHROPIC_API_KEY no Railway.' });
+// ── Rota de diagnóstico — acesse /api/health no browser para verificar ──
+app.get('/api/health', async (req, res) => {
+  const key = process.env.ANTHROPIC_API_KEY;
+  if (!key) return res.json({ status: 'error', message: 'ANTHROPIC_API_KEY não configurada' });
+
+  try {
+    const test = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': key,
+        'anthropic-version': '2023-06-01'
+      },
+      body: JSON.stringify({
+        model: 'claude-haiku-4-5-20251001',
+        max_tokens: 10,
+        messages: [{ role: 'user', content: 'ping' }]
+      })
+    });
+    const body = await test.json();
+    if (test.ok) {
+      res.json({ status: 'ok', model: 'claude-haiku-4-5-20251001', keyPrefix: key.slice(0, 18) + '...' });
+    } else {
+      res.json({ status: 'api_error', httpStatus: test.status, detail: body });
+    }
+  } catch(e) {
+    res.json({ status: 'fetch_error', message: e.message });
   }
+});
+
+// ── Proxy para a API da Anthropic ─────────────────────────────
+app.post('/api/chat', async (req, res) => {
+  const key = process.env.ANTHROPIC_API_KEY;
+  if (!key) {
+    return res.status(500).json({ error: 'ANTHROPIC_API_KEY não configurada no Railway.' });
+  }
+
   try {
     const { system, messages, max_tokens } = req.body;
+
+    if (!messages || !Array.isArray(messages) || messages.length === 0) {
+      return res.status(400).json({ error: 'Campo "messages" ausente ou inválido.' });
+    }
+
+    const payload = {
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: max_tokens || 900,
+      messages
+    };
+    if (system) payload.system = system;
 
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'x-api-key': process.env.ANTHROPIC_API_KEY,
+        'x-api-key': key,
         'anthropic-version': '2023-06-01'
       },
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-5',
-        max_tokens: max_tokens || 900,
-        system,
-        messages
-      })
+      body: JSON.stringify(payload)
     });
 
+    const data = await response.json();
+
     if (!response.ok) {
-      const err = await response.text();
-      console.error('Anthropic API error ' + response.status + ':', err);
-      return res.status(response.status).json({ error: err });
+      console.error(`Anthropic ${response.status}:`, JSON.stringify(data));
+      return res.status(response.status).json({ error: data?.error?.message || JSON.stringify(data) });
     }
 
-    const data = await response.json();
     res.json(data);
   } catch (e) {
     console.error('Proxy error:', e);
@@ -43,9 +81,8 @@ app.post('/api/chat', async (req, res) => {
   }
 });
 
-// ── Armazenamento de sessões em memória (+ arquivo JSON) ───────
-const fs           = require('fs');
-const DB_FILE      = path.join(__dirname, 'sessions.json');
+// ── Sessões ────────────────────────────────────────────────────
+const DB_FILE = path.join(__dirname, 'sessions.json');
 
 function readDB() {
   try {
@@ -57,14 +94,12 @@ function writeDB(data) {
   try { fs.writeFileSync(DB_FILE, JSON.stringify(data), 'utf8'); } catch(e) { console.error('writeDB', e); }
 }
 
-// GET todas as sessões (admin)
 app.get('/api/sessions', (req, res) => {
-  const auth = req.headers['x-admin-token'];
-  if (auth !== process.env.ADMIN_TOKEN) return res.status(401).json({ error: 'Unauthorized' });
+  if (req.headers['x-admin-token'] !== process.env.ADMIN_TOKEN)
+    return res.status(401).json({ error: 'Unauthorized' });
   res.json(readDB());
 });
 
-// POST salvar/atualizar sessão
 app.post('/api/sessions', (req, res) => {
   try {
     const sess = req.body;
@@ -80,13 +115,12 @@ app.post('/api/sessions', (req, res) => {
   }
 });
 
-// DELETE limpar todas as sessões
 app.delete('/api/sessions', (req, res) => {
-  const auth = req.headers['x-admin-token'];
-  if (auth !== process.env.ADMIN_TOKEN) return res.status(401).json({ error: 'Unauthorized' });
+  if (req.headers['x-admin-token'] !== process.env.ADMIN_TOKEN)
+    return res.status(401).json({ error: 'Unauthorized' });
   writeDB([]);
   res.json({ ok: true });
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`BM&A server running on port ${PORT}`));
+app.listen(PORT, () => console.log(`BM&A rodando na porta ${PORT}`));
