@@ -1,0 +1,15 @@
+{
+  "name": "bma-treinamento",
+  "version": "1.0.0",
+  "description": "BM&A — Plataforma de Treinamento de Negociação",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
