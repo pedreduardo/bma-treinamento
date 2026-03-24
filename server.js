@@ -7,6 +7,10 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 // ── Proxy seguro para a API da Anthropic ──────────────────────
 app.post('/api/chat', async (req, res) => {
+  if (!process.env.ANTHROPIC_API_KEY) {
+    console.error('ANTHROPIC_API_KEY nao configurada!');
+    return res.status(500).json({ error: 'Chave da API nao configurada. Configure ANTHROPIC_API_KEY no Railway.' });
+  }
   try {
     const { system, messages, max_tokens } = req.body;
 
@@ -18,7 +22,7 @@ app.post('/api/chat', async (req, res) => {
         'anthropic-version': '2023-06-01'
       },
       body: JSON.stringify({
-        model: 'claude-sonnet-4-6',
+        model: 'claude-sonnet-4-5',
         max_tokens: max_tokens || 900,
         system,
         messages
@@ -27,6 +31,7 @@ app.post('/api/chat', async (req, res) => {
 
     if (!response.ok) {
       const err = await response.text();
+      console.error('Anthropic API error ' + response.status + ':', err);
       return res.status(response.status).json({ error: err });
     }
 
